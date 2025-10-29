@@ -1,0 +1,314 @@
+### Job name
+#SBATCH --job-name=GWAS_and_post_GWAS_pipeline
+### Specify requirements - Task (default: 1 node, 1 Core, 12.5G mem/cpu)
+#SBATCH --nodes=1
+#SBATCH --ntasks-per-node=1
+#SBATCH --mem-per-cpu=150GB
+################################################################################
+
+# Useful information to print
+echo '########################################'
+echo 'Date:' $(date --iso-8601=seconds)
+echo 'User:' $USER
+echo 'Host:' $HOSTNAME
+echo 'Job Name:' $SLURM_JOB_NAME
+echo 'Job Id:' $SLURM_JOB_ID
+echo 'Directory:' $(pwd)
+# Detail Information:
+scontrol show job $SLURM_JOB_ID
+echo '########################################'
+
+##################Load required modules from cbib server#############################################################
+module load plink/1.90
+module load plink/2.00
+module load R/4.1.0
+
+####################################To run GWAS in REGENIE#################################################
+##############REGENIE step1##################################################
+module load gcc/6.2.0
+
+#regenie_v3.4.1.gz_x86_64_Centos7_mkl \
+./regenie_v3.4.1.gz_x86_64_Centos7_mkl \
+--step 1 \
+--bed /isilon/cbib/INSERM_U897/UKBiobank_data/UKBiobank2023_App94113/Genetic_Data_Clean/Genotypes/ukb22418_allCHR_b0_v2.SampleMRI.qc_pass_PrunedforRegenieStep1.EUR \
+--covarFile MCSVD.out_sorted_defined_35percentage_bottom_quantile_with_SCORE_sortedPRS_60to100percentaile_N5412_resilient_and_N10481_non_resilient_UKB_without_ICV_covar.txt \
+--phenoFile MCSVD.out_sorted_defined_35percentage_bottom_quantile_with_SCORE_sortedPRS_60to100percentaile_N5412_resilient_and_N10481_non_resilient_UKB_pheno.txt \
+--bt \
+--threads 4 \
+--bsize 1000 \
+--strict \
+--out Results_STEP1_GWAS_WMH_N5412_resilient_and_N10481_non_resilient_UKB \
+
+##############REGENIE step2##################################################
+CHR=${SLURM_ARRAY_TASK_ID}
+
+cd /mnt/cbib/INSERM_U897/HEMA/PRS_cSVD/WMH_Single_trait_best_model_generate_score_in_UKBiobank/GWAS_WMH_UKB
+
+PHENO_file=/mnt/cbib/INSERM_U897/HEMA/PRS_cSVD/WMH_Single_trait_best_model_generate_score_in_UKBiobank/GWAS_WMH_UKB/MCSVD.out_sorted_defined_35percentage_bottom_quantile_with_SCORE_sortedPRS_60to100percentaile_N5412_resilient_and_N10481_non_resilient_UKB_pheno.txt
+COVAR_file=/mnt/cbib/INSERM_U897/HEMA/PRS_cSVD/WMH_Single_trait_best_model_generate_score_in_UKBiobank/GWAS_WMH_UKB/MCSVD.out_sorted_defined_35percentage_bottom_quantile_with_SCORE_sortedPRS_60to100percentaile_N5412_resilient_and_N10481_non_resilient_UKB_without_ICV_covar.txt
+
+PRED_file=/mnt/cbib/INSERM_U897/HEMA/PRS_cSVD/WMH_Single_trait_best_model_generate_score_in_UKBiobank/GWAS_WMH_UKB/Results_STEP1_GWAS_WMH_N5412_resilient_and_N10481_non_resilient_UKB_pred.list
+
+BGEN=/isilon/cbib/INSERM_U897/UKBiobank_data/UKBiobank2023_App94113/Original_Download_16102023/GenotypeData/Imputation_HRC_UK10K_v3_UKBB/ukb22828_c${CHR}_b0_v3.bgen
+SAMPLE=/isilon/cbib/INSERM_U897/UKBiobank_data/UKBiobank2023_App94113/Original_Download_16102023/GenotypeData/Imputation_HRC_UK10K_v3_UKBB/ukb22828_c${CHR}_b0_v3_s487149.sample
+BGI=/isilon/cbib/INSERM_U897/UKBiobank_data/UKBiobank2023_App94113/Original_Download_16102023/GenotypeData/Imputation_HRC_UK10K_v3_UKBB/ukb_imp_chr${CHR}_v3.bgen.bgi
+
+./regenie_v3.4.1.gz_x86_64_Centos7_mkl \
+--step 2 \
+--bgen $BGEN \
+--sample $SAMPLE \
+--bgi $BGI \
+--keep /isilon/cbib/INSERM_U897/UKBiobank_data/UKBiobank2023_App94113/Genetic_Data_Clean/Genotypes/ukb22418_allCHR_b0_v2.SampleMRI.qc_pass_Step1Regenie.EUR.id \
+--covarFile $COVAR_file \
+--phenoFile $PHENO_file \
+--bt \
+--bsize 200 \
+--strict \
+--pred $PRED_file \
+--out /mnt/cbib/INSERM_U897/HEMA/PRS_cSVD/WMH_Single_trait_best_model_generate_score_in_UKBiobank/GWAS_WMH_UKB/Results_STEP2/Results_STEP1_GWAS_WMH_N5412_resilient_and_N10481_non_resilient_UKB_Step2.chr${CHR} \
+--threads 4
+##########################################################
+
+R --vanilla <<EOF
+
+library(data.table)
+library(dplyr)
+library(ggplot2)
+
+
+############################################################################################################################################################
+######################################################Processing the regenie output for MH and QQ plots#####################################################
+data_MEMENTO_MAF <- fread("GWAS_MCI_MEMENTO_3C_Sex_Combined_MCI_Vs_Normal.assoc.logistic_ADD", header=T)
+head(data_MEMENTO_MAF)
+
+#############################################################################################################################################################
+Memento_GWAS <- fread("/mnt/cbib/INSERM_U897/HEMA/REIMPUTED_3C_MEMENTO/Plink_INFO_files/chrAUTO_shortTAB.info", header=T)
+head(Memento_GWAS)
+
+#############################################################################################################################################################
+merged_data_MEMENTO_MAF1 <- merge(data_MEMENTO_MAF, Memento_GWAS, by="SNP")
+head(merged_data_MEMENTO_MAF1)
+dim(merged_data_MEMENTO_MAF1)
+
+write.table(merged_data_MEMENTO_MAF1, "GWAS_MCI_MEMENTO_3C_Sex_Combined_MCI_Vs_Normal.assoc.logistic_ADD_summary_association_results", col.names = T, sep = "\\t", quote = F, row.names = F)
+################################################################################################################################################################
+
+EOF
+
+awk 'OFS="\t"{print $2 ":" $3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17}' GWAS_MCI_MEMENTO_3C_Sex_Combined_MCI_Vs_Normal.assoc.logistic_ADD_summary_association_results > GWAS_MCI_MEMENTO_3C_Sex_Combined_MCI_Vs_Normal.assoc.logistic_ADD_summary_association_results_1
+
+##Generating input for QQ and MH plots from regenie output
+awk '{print $1,$1,$10}' GWAS_MCI_MEMENTO_3C_Sex_Combined_MCI_Vs_Normal.assoc.logistic_ADD_summary_association_results_1|sed "s/:/ /"|awk 'OFS="\t"{print $3,$1,$2,$4}'|grep -v P |sort -gk2,2 -gk3,3|sed 1i"SNP\tchr\tbp\tp"|sed "s/:/_/" > GWAS_MCI_MEMENTO_3C_Sex_Combined_MCI_Vs_Normal.assoc.logistic_ADD_summary_association_results_1_forplots
+
+###################################post-GWAS quality control####################################################
+# load required software modules
+module load R/4.1.3_cairo
+module load plink/1.90
+
+for i in `cat EA.filelist_wogc`
+do
+
+N_study=$(tail -2 ${i}.tbl.info|head -1|cut -d' ' -f5)
+N_Study2=$(($N_study/3))
+N_EVENT=$(grep $i EA_N_Events.list_wogc|cut -d' ' -f1)
+N_EVENT2=$((N_EVENT/3))
+
+#zcat ${i}.tbl.gz | grep -v ID | grep -v X|grep -v Y| grep -v HSCH| grep -v d| grep -v indel|grep -v 23:|grep -v Un| awk -vNE=${N_EVENT2} -vNS=${N_Study2} '{if($14>=NS && $15>1e-6 && $16>=NE) print}' >${i}_NeNs3rdDp1e6.tbl
+zcat ${i}.tbl.gz | grep -v ID | grep -v X|grep -v Y| grep -v HSCH| grep -v d| grep -v indel|grep -v 23:|grep -v Un| awk -vNE=${N_EVENT2} -vNS=${N_Study2} '{if($15>1e-6) print}' >${i}_NeNs3rdDp1e6.tbl
+
+awk '{print $1,$1,$10}' ${i}_NeNs3rdDp1e6.tbl|grep -v MarkerName|grep -v X:|sed 's/:/_/;s/:/ /'|sed "s/ /\t/g"| sort -gk2,2 -gk3,3|sed 1i"SNP\tchr\tbp\tp" >${i}_NeNs3rdDp1e6.forPLOTs
+
+sh ./script_QQandMHTplots.sh ${i}_NeNs3rdDp1e6.forPLOTs
+
+awk 'OFS="\t"{if($11<5e-8) print $1,$10}' ${i}_NeNs3rdDp1e6.tbl| sed "1i SNP\tP" >${i}_NeNs3rdDp1e6.GWAShits
+
+
+plink --bfile /mnt/cbib/INSERM_U897/three_city_imputated_genotypes_HRC_Michigan/PLINKfiles_HRC/WithoutDuplicates/HRC_Shapeit_Minimac_chrAUTO_3C.dose \
+--clump ${i}_NeNs3rdDp1e6.GWAShits \
+--clump-p1 5e-8 \
+--clump-p2 5e-8 \
+--clump-r2 0.01 \
+--clump-kb 1000 \
+--out ${i}_NeNs3rdDp1e6.GWAShits_clump_5e8P_1r2_1Mb
+
+plink --annotate ${i}_NeNs3rdDp1e6.GWAShits_clump_5e8P_1r2_1Mb.clumped \
+ranges=./glist-hg19 \
+--border 500 \
+--out ${i}_NeNs3rdDp1e6.GWAShits_clump_5e8P_1r2_500kb.Ngenes
+
+gzip ${i}_NeNs3rdDp1e6.tbl
+
+gzip ${i}_NeNs3rdDp1e6.forPLOTs
+
+done
+#####################################################################################################################
+
+R --vanilla <<EOF
+
+library(data.table)
+out_qq <- paste("GWAS_MCI_MEMENTO_3C_Sex_Combined_MCI_Vs_Normal.assoc.logistic_ADD_summary_association_results_1_forplots",".QQ_plot.jpeg",sep="")
+out_mh <- paste("GWAS_MCI_MEMENTO_3C_Sex_Combined_MCI_Vs_Normal.assoc.logistic_ADD_summary_association_results_1_forplots",".MH_plot.jpeg",sep="")
+#results <- read.delim($1,colClasses=c("character",rep("numeric",3)), header=T, sep = "\t")
+results <- data.frame(fread("GWAS_MCI_MEMENTO_3C_Sex_Combined_MCI_Vs_Normal.assoc.logistic_ADD_summary_association_results_1_forplots", header=T))
+
+#creating qq function#
+qq<-function(pvalue,outfile){
+        summary(pvalue)
+        bitmap(outfile,w=8,h=8,r=200)
+        pvals<-na.omit(pvalue)
+        print(length(pvals))
+        lgP<-log(pvals, base=10)
+        N<-length(pvalue)
+        n<-length(pvals)
+        mp <- median(pvals);print(mp)
+        std.mchi<-qchisq(mp,df=1,lower.tail=F)/qchisq(0.5,1)
+        write(c("Total: ",N,";  Nmiss: ",N-n,";  lambdaGC:  ",std.mchi),paste(outfile,".dat",sep=""),
+                ncol=10)
+        par(pty="s")
+        print(range(-lgP))
+        qqplot(-log((seq(1,n,1)-0.5)/n, base=10),-lgP,xlim=range(-lgP),
+        ylim=range(-lgP),
+        ylab="-log_10 P",xlab="Expected -log_10 P",main=outfile,pch=20)
+        abline(0,1)
+        text(mean(range(-lgP)),1,substitute(lambda==x,
+        list(x=round(std.mchi,2))),cex=2)
+        dev.off()
+}
+
+#applying the function #
+qq(results[,4], out_qq)
+
+#creating mh function#
+stripe.post <- function(p, chromosome, out, obs=NULL, main=""){
+        bitmap(file=out,w=8,h=6,r=200)
+        chromcode <- c(unique(chromosome))
+        logp <- -log(p,10)
+
+        N <- length(logp)
+
+        #  set-up the plot -- y max, chromosome bounds, symbols
+        ymax<-log(N,10)+4
+
+        chromstart<-which(c(1,diff(chromosome))==1)
+        chromend<-c(chromstart[-1],N)
+
+        x<-(1:N)+chromosome*(chromend[1]/6)
+        y<-pmin(ymax,logp)
+
+        # use a different symbol for points above ymax
+        if (is.null(obs)) {
+          pchar<-ifelse(y==ymax,24,19)
+        } else {
+            pchar<-ifelse(obs,ifelse(y==ymax,24,19),ifelse(y==ymax,2,1))
+            }
+        nclr<-length(palette())
+        clrs<-1+(chromosome %% nclr)
+
+        # the scaling (cex) below gives bigger symbols to more significant SNPs
+        plot(x,y,cex=0.05+1.5*y/ymax, col=clrs, pch=pchar, bg=clrs,
+        xlab="Chromosome", ylab=quote(-log[10](p)), xaxt="n", yaxt="n", las=2, ylim=c(0,ymax), main=main)
+        centers<- (x[chromstart]+x[chromend]-(chromend[1]/6))/2
+        centers[length(chromcode)]<-x[N]
+
+       axis(1, at=centers, col="black", lwd=0.6, labels=rep("", length(centers)))
+
+        # force R to label every chromosome
+          for(i in 1:22) {
+         mtext(chromcode[i], side=1, at=centers[i], cex=0.6, line=1, lwd=0.6, col="black")
+         }
+        axis(2,at=seq(0,round(ymax,0),by=2),las=2, col="black", lwd=0.6) #
+        abline(h=-log(1/dim(all)[1],10), lty="solid")
+        abline(h=-log(5e-8,10), lty="dashed")
+        abline(h=-log(1e-6,10), lty="dashed", col="orange")
+        dev.off()
+        }
+
+plink --b#applying the function#
+stripe.post(results[,4], results[,2], out_mh)
+EOF
+
+#########################################################################################################################################################
+##################################To conduct Phenome wide association study#########################33333333#############################################
+R --vanilla <<EOF
+
+# Load required modules
+module load R/4.1.0
+
+library(data.table)
+
+#Reading the complete data of PheWAS phentpes, PGS scores of AD, stroke, WMH and covariates file
+DATA <- read.table("PheWAS_phenotypes_and_PGS_of_Dementia_with_covariates_corrected.txt", fill=T, header=T)
+head(DATA)
+dim(DATA)
+
+#Reading PheWAS catagories file
+CAT <- read.table("Memento_PheWAS_2_uniq_phenotypes.txt", header=T)
+head(CAT)
+dim(CAT)
+
+# Create Empty result dataframe
+#df = data.frame(matrix(nrow = 1 * nrow(CAT), ncol = 8))
+#colnames(df)<- c("Marker_Name", "PGS_NAME", "Model", "N", "Beta", "SE", "PVAL", "R2")
+
+#Looping over full data and categories
+#for(i in 1:5){
+data <- data.frame()
+for(i in 1:nrow(CAT)){
+        #print(i)
+        DATA2 <- DATA[which(DATA\$category.label == CAT[i,]), ]
+        #print(DATA2[1:5, ])
+        DATA2\$INT_value <- qnorm((rank(DATA2\$value,na.last="keep")-0.5)/sum(!is.na(DATA2\$value)))
+        print(dim(DATA2))
+        data <- rbind(data, DATA2)
+        #DATA3 <- na.omit(DATA2)
+        #print(dim(DATA3))
+}
+#write.table(data, "PheWAS_phenotypes_and_PGS_of_Dementia_with_covariates_corrected_for_GWAS.txt", col.names=T, sep="\\t", quote=F, row.names=F)
+##########################################################################################################################################################
+
+#1 AD
+model0 <- lm(DATA2\$INT_value ~ DATA2\$APOE_eps2 + DATA2\$AGE_CONS + DATA2\$SEX + DATA2\$CEN_ANOM + DATA2\$PC1 + DATA2\$PC2 + DATA2\$PC3 + DATA2\$PC4)
+summary(model0)
+
+df\$Marker_Name[i]<-CAT[i,]
+df\$PGS_NAME[i] <- "APOE_eps2"
+df\$Model[i]<- "Age,Sex,PC1,PC2,PC3,PC4"
+df\$N[i] <- nrow(DATA2)
+df\$Beta[i] <- summary(model0)\$coeff["DATA2\$APOE_eps2",1]
+df\$SE[i] <- summary(model0)\$coeff["DATA2\$APOE_eps2",2]
+df\$PVAL[i] <- summary(model0)\$coeff["DATA2\$APOE_eps2",4]
+df\$R2[i] <- summary(model0)\$r.squared
+}
+
+if(FALSE){
+#2 Stroke
+model1 <- lm(DATA2\$INT_value ~ DATA2\$INT_SCORE_STROKE + DATA2\$AGE_CONS + DATA2\$SEX + DATA2\$CEN_ANOM + DATA2\$PC1 + DATA2\$PC2 + DATA2\$PC3 + DATA2\$PC4)
+summary(model1)
+df\$Marker_Name[i]<-CAT[i,]
+df\$PGS_NAME[i] <- "Stroke"
+df\$Model[i]<- "Age,Sex,PC1,PC2,PC3,PC4"
+df\$N[i] <- nrow(DATA2)
+df\$Beta[i] <- summary(model1)\$coeff["DATA2\$INT_SCORE_STROKE",1]
+df\$SE[i] <- summary(model1)\$coeff["DATA2\$INT_SCORE_STROKE",2]
+df\$PVAL[i] <- summary(model1)\$coeff["DATA2\$INT_SCORE_STROKE",4]
+df\$R2[i] <- summary(model1)\$r.squared
+}
+
+#3 WHM
+model2 <- lm(DATA2\$INT_value ~ DATA2\$INT_SCORE_WMH + DATA2\$AGE_CONS + DATA2\$SEX + DATA2\$CEN_ANOM + DATA2\$PC1 + DATA2\$PC2 + DATA2\$PC3 + DATA2\$PC4)
+summary(model2)
+df\$Marker_Name[i+2*nrow(CAT)]<-CAT[i,]
+df\$PGS_NAME[i+2*nrow(CAT)] <- "WMH"
+df\$Model[i+2*nrow(CAT)]<- "Age,Sex,PC1,PC2,PC3,PC4"
+df\$N[i+2*nrow(CAT)] <- nrow(DATA2)
+df\$Beta[i+2*nrow(CAT)] <- summary(model2)\$coeff["DATA2\$INT_SCORE_WMH",1]
+df\$SE[i+2*nrow(CAT)] <- summary(model2)\$coeff["DATA2\$INT_SCORE_WMH",2]
+df\$PVAL[i+2*nrow(CAT)] <- summary(model2)\$coeff["DATA2\$INT_SCORE_WMH",4]
+df\$R2[i+2*nrow(CAT)] <- summary(model2)\$r.squared
+
+}
+
+write.table(df, "Results_of_PheWAS_with_APOE_eps2_test.tbl", col.names=T, sep="\\t", quote=F, row.names=F)
+>>EOF
+#################################################################################################################################################
+#################################################################################################################################################
