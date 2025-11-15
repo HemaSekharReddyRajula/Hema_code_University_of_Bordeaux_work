@@ -100,6 +100,87 @@ awk 'OFS="\t"{print $2 ":" $3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17}
 ##Generating input for QQ and MH plots from regenie output
 awk '{print $1,$1,$10}' GWAS_MCI_MEMENTO_3C_Sex_Combined_MCI_Vs_Normal.assoc.logistic_ADD_summary_association_results_1|sed "s/:/ /"|awk 'OFS="\t"{print $3,$1,$2,$4}'|grep -v P |sort -gk2,2 -gk3,3|sed 1i"SNP\tchr\tbp\tp"|sed "s/:/_/" > GWAS_MCI_MEMENTO_3C_Sex_Combined_MCI_Vs_Normal.assoc.logistic_ADD_summary_association_results_1_forplots
 
+library(data.table)
+out_qq <- paste("$1",".QQ_plot.jpeg",sep="")
+out_mh <- paste("$1",".MH_plot.jpeg",sep="")
+#results <- read.delim($1,colClasses=c("character",rep("numeric",3)), header=T, sep = "\t")
+results <- data.frame(fread("$1", header=T))
+
+#creating qq function#
+qq<-function(pvalue,outfile){
+        summary(pvalue)
+        bitmap(outfile,w=8,h=8,r=200)
+        pvals<-na.omit(pvalue)
+        print(length(pvals))
+        lgP<-log(pvals, base=10)
+        N<-length(pvalue)
+        n<-length(pvals)
+        mp <- median(pvals);print(mp)
+        std.mchi<-qchisq(mp,df=1,lower.tail=F)/qchisq(0.5,1)
+        write(c("Total: ",N,";  Nmiss: ",N-n,";  lambdaGC:  ",std.mchi),paste(outfile,".dat",sep=""),
+                ncol=10)
+        par(pty="s")
+        print(range(-lgP))
+        qqplot(-log((seq(1,n,1)-0.5)/n, base=10),-lgP,xlim=range(-lgP),
+        ylim=range(-lgP),
+        ylab="-log_10 P",xlab="Expected -log_10 P",main=outfile,pch=20)
+        abline(0,1)
+        text(mean(range(-lgP)),1,substitute(lambda==x,
+        list(x=round(std.mchi,2))),cex=2)
+        dev.off()
+}
+
+#applying the function #
+qq(results[,4], out_qq)
+
+#creating mh function#
+stripe.post <- function(p, chromosome, out, obs=NULL, main=""){
+        bitmap(file=out,w=8,h=6,r=200)
+        chromcode <- c(unique(chromosome))
+        logp <- -log(p,10)
+
+        N <- length(logp)
+
+        #  set-up the plot -- y max, chromosome bounds, symbols
+        ymax<-log(N,10)+4
+
+        chromstart<-which(c(1,diff(chromosome))==1)
+        chromend<-c(chromstart[-1],N)
+
+        x<-(1:N)+chromosome*(chromend[1]/6)
+        y<-pmin(ymax,logp)
+
+        # use a different symbol for points above ymax
+        if (is.null(obs)) {
+          pchar<-ifelse(y==ymax,24,19)
+        } else {
+            pchar<-ifelse(obs,ifelse(y==ymax,24,19),ifelse(y==ymax,2,1))
+            }
+        nclr<-length(palette())
+        clrs<-1+(chromosome %% nclr)
+
+        # the scaling (cex) below gives bigger symbols to more significant SNPs
+        plot(x,y,cex=0.05+1.5*y/ymax, col=clrs, pch=pchar, bg=clrs,
+        xlab="Chromosome", ylab=quote(-log[10](p)), xaxt="n", yaxt="n", las=2, ylim=c(0,ymax), main=main)
+        centers<- (x[chromstart]+x[chromend]-(chromend[1]/6))/2
+        centers[length(chromcode)]<-x[N]
+
+       axis(1, at=centers, col="black", lwd=0.6, labels=rep("", length(centers)))
+
+        # force R to label every chromosome
+          for(i in 1:22) {
+         mtext(chromcode[i], side=1, at=centers[i], cex=0.6, line=1, lwd=0.6, col="black")
+         }
+        axis(2,at=seq(0,round(ymax,0),by=2),las=2, col="black", lwd=0.6) #
+        abline(h=-log(1/dim(all)[1],10), lty="solid")
+        abline(h=-log(5e-8,10), lty="dashed")
+        abline(h=-log(1e-6,10), lty="dashed", col="orange")
+        dev.off()
+        }
+
+#applying the function#
+stripe.post(results[,4], results[,2], out_mh)
+
 ###################################post-GWAS quality control####################################################
 # load required software modules
 module load R/4.1.3_cairo
